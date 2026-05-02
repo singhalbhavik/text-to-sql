@@ -1,5 +1,7 @@
 """Executes a SQL query against a SQLite database and returns results."""
 
+import re
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -8,11 +10,22 @@ class QueryError(Exception):
     pass
 
 
+class SchemaError(QueryError):
+    """Raised when the query references columns or tables not in the schema."""
+    pass
+
+
+def validate_sql(sql: str) -> None:
+    """Raise QueryError if sql is not a SELECT statement."""
+    cleaned = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+    cleaned = re.sub(r"--[^\n]*", "", cleaned).strip().upper()
+    if not cleaned.startswith("SELECT"):
+        raise QueryError("Only SELECT queries are allowed.")
+
+
 def execute_query(db_path: str, sql: str) -> tuple[list[str], list[tuple]]:
-    """
-    Run a SELECT query and return (column_names, rows).
-    Raises QueryError on SQL errors.
-    """
+    """Run a SELECT query and return (column_names, rows). Raises QueryError on SQL errors."""
+    validate_sql(sql)
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.connect() as conn:
@@ -21,7 +34,11 @@ def execute_query(db_path: str, sql: str) -> tuple[list[str], list[tuple]]:
             rows = result.fetchall()
             return columns, [tuple(row) for row in rows]
     except SQLAlchemyError as e:
-        raise QueryError(str(e)) from e
+        msg = str(e)
+        m = re.search(r"no such (column|table): (\S+)", msg, re.IGNORECASE)
+        if m:
+            raise SchemaError(f"no {m.group(1)} '{m.group(2)}' in this database") from e
+        raise QueryError(msg) from e
     finally:
         engine.dispose()
 

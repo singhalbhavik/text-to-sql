@@ -3,11 +3,11 @@
 from sqlalchemy import create_engine, inspect, text
 
 
-def load_schema(db_path: str) -> str:
-    """Return a human-readable DDL-style description of all tables in the database."""
+def load_schema(db_path: str, sample_rows: int = 3) -> str:
+    """Return a human-readable DDL-style schema with optional sample rows per table."""
     engine = create_engine(f"sqlite:///{db_path}")
     inspector = inspect(engine)
-    lines = []
+    sections = []
 
     for table_name in inspector.get_table_names():
         columns = inspector.get_columns(table_name)
@@ -27,10 +27,22 @@ def load_schema(db_path: str) -> str:
                 f"  FOREIGN KEY ({local_cols}) REFERENCES {fk['referred_table']}({ref_cols})"
             )
 
-        lines.append(f"CREATE TABLE {table_name} (\n" + ",\n".join(col_defs) + "\n);")
+        table_def = f"CREATE TABLE {table_name} (\n" + ",\n".join(col_defs) + "\n);"
+
+        if sample_rows > 0:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(f"SELECT * FROM {table_name} LIMIT :n"), {"n": sample_rows}
+                )
+                rows = [dict(row._mapping) for row in result]
+            if rows:
+                sample_lines = "\n".join(f"  {row}" for row in rows)
+                table_def += f"\n/* sample rows:\n{sample_lines}\n*/"
+
+        sections.append(table_def)
 
     engine.dispose()
-    return "\n\n".join(lines)
+    return "\n\n".join(sections)
 
 
 def get_sample_rows(db_path: str, table_name: str, n: int = 3) -> list[dict]:
